@@ -8,7 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: "*",
+    origin: "*", // In production, specify your frontend URL
     methods: ["GET", "POST"],
   },
 });
@@ -17,7 +17,7 @@ const io = socketIO(server, {
 app.use(cors());
 app.use(express.json());
 
-// Global error handler for Express routes, keeps the server running in the event of an error.
+// Global error handler for Express routes
 app.use((err, req, res, next) => {
   console.error("Express error:", err.stack);
   res.status(500).json({
@@ -26,24 +26,24 @@ app.use((err, req, res, next) => {
   });
 });
 
-// In-memory storage for messages (replace with database or Redis in production)
+// In-memory storage for messages (replace with database in production)
 const chatHistory = {};
 
 // Routes
 app.get("/", (req, res) => {
-  res.send("Session server is running");
+  res.send("Chat server is running");
 });
 
 // Get chat history for a specific room
-app.get("/api/session/:sessionId", (req, res, next) => {
+app.get("/api/chat/:roomId", (req, res, next) => {
   try {
-    const { sessionId } = req.params;
+    const { roomId } = req.params;
 
-    if (!sessionId) {
-      return res.status(400).json({ error: "Session ID is required" });
+    if (!roomId) {
+      return res.status(400).json({ error: "Room ID is required" });
     }
 
-    res.json(chatHistory[sessionId] || []);
+    res.json(chatHistory[roomId] || []);
   } catch (error) {
     next(error); // Pass to the error handler
   }
@@ -64,10 +64,10 @@ io.on("connection", (socket) => {
   });
 
   // Handle joining a room
-  socket.on("join_room", (sessionId, username) => {
+  socket.on("join_room", (roomId, username) => {
     try {
       // Validate input
-      if (!sessionId) {
+      if (!roomId) {
         socket.emit("error", { message: "Room ID is required" });
         return;
       }
@@ -75,21 +75,21 @@ io.on("connection", (socket) => {
       const sanitizedUsername = username || "Anonymous";
 
       // Join the socket.io room
-      socket.join(sessionId);
+      socket.join(roomId);
 
       // Store room info on the socket for disconnection handling
       socket.userData = {
-        currentRoom: sessionId,
+        currentRoom: roomId,
         username: sanitizedUsername,
       };
 
       // Initialize room history if it doesn't exist
-      if (!chatHistory[sessionId]) {
-        chatHistory[sessionId] = [];
+      if (!chatHistory[roomId]) {
+        chatHistory[roomId] = [];
       }
 
       // Send room history to the newly connected user
-      socket.emit("chat_history", chatHistory[sessionId]);
+      socket.emit("chat_history", chatHistory[roomId]);
 
       // Notify others that user has joined
       const joinMessage = {
@@ -100,10 +100,10 @@ io.on("connection", (socket) => {
         type: "notification",
       };
 
-      chatHistory[sessionId].push(joinMessage);
-      io.to(sessionId).emit("message", joinMessage);
+      chatHistory[roomId].push(joinMessage);
+      io.to(roomId).emit("message", joinMessage);
 
-      console.log(`${sanitizedUsername} joined room: ${sessionId}`);
+      console.log(`${sanitizedUsername} joined room: ${roomId}`);
     } catch (error) {
       console.error("Error joining room:", error);
       socket.emit("error", { message: "Failed to join room" });
@@ -113,18 +113,30 @@ io.on("connection", (socket) => {
   // Handle new messages
   socket.on("send_message", (messageData) => {
     try {
-      // Input must always be validated to reduce exploit potential
-      // We should consider a library for this in production
-      if (!messageData || !messageData.sessionId || !messageData.message) {
+      // Log received message data for debugging
+      console.log("Received message data:", JSON.stringify(messageData));
+
+      // Validate input
+      if (!messageData || !messageData.roomId || !messageData.message) {
+        console.error("Invalid message format received:", messageData);
         socket.emit("error", { message: "Invalid message format" });
         return;
       }
 
-      const { sessionId, message } = messageData;
+      const { roomId, message } = messageData;
+
+      // Further validation
+      if (!message.sender || !message.text) {
+        console.error("Message missing required fields:", message);
+        socket.emit("error", {
+          message: "Message must include sender and text",
+        });
+        return;
+      }
 
       // Check if room exists
-      if (!chatHistory[sessionId]) {
-        chatHistory[sessionId] = [];
+      if (!chatHistory[roomId]) {
+        chatHistory[roomId] = [];
       }
 
       // Format the message
@@ -140,15 +152,15 @@ io.on("connection", (socket) => {
       };
 
       // Save to history
-      chatHistory[sessionId].push(formattedMessage);
+      chatHistory[roomId].push(formattedMessage);
 
       // Limit history size (optional)
-      if (chatHistory[sessionId].length > 100) {
-        chatHistory[sessionId] = chatHistory[sessionId].slice(-100);
+      if (chatHistory[roomId].length > 100) {
+        chatHistory[roomId] = chatHistory[roomId].slice(-100);
       }
 
       // Broadcast to everyone in the room
-      io.to(sessionId).emit("message", formattedMessage);
+      io.to(roomId).emit("message", formattedMessage);
     } catch (error) {
       console.error("Error handling message:", error);
       socket.emit("error", { message: "Failed to process message" });
@@ -157,16 +169,16 @@ io.on("connection", (socket) => {
 
   // Handle typing status
   socket.on("typing", (data) => {
-    const { sessionId, username, isTyping } = data;
+    const { roomId, username, isTyping } = data;
 
     // Broadcast typing status to everyone else in the room
-    socket.to(sessionId).emit("user_typing", { username, isTyping });
+    socket.to(roomId).emit("user_typing", { username, isTyping });
   });
 
   // Handle user leaving
-  socket.on("leave_room", (sessionId, username) => {
+  socket.on("leave_room", (roomId, username) => {
     // Notify others that user has left
-    if (chatHistory[sessionId]) {
+    if (chatHistory[roomId]) {
       const leaveMessage = {
         id: Date.now().toString(),
         sender: "system",
@@ -175,22 +187,60 @@ io.on("connection", (socket) => {
         type: "notification",
       };
 
-      chatHistory[sessionId].push(leaveMessage);
-      io.to(sessionId).emit("message", leaveMessage);
+      chatHistory[roomId].push(leaveMessage);
+      io.to(roomId).emit("message", leaveMessage);
     }
 
-    socket.leave(sessionId);
-    console.log(`${username} left room: ${sessionId}`);
+    socket.leave(roomId);
+    console.log(`${username} left room: ${roomId}`);
   });
 
   // Handle disconnection
   socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
+    try {
+      console.log("Client disconnected:", socket.id);
+
+      // Clean up user data and notify room if needed
+      if (socket.userData && socket.userData.currentRoom) {
+        const { currentRoom, username } = socket.userData;
+
+        // Notify room that user has disconnected
+        if (chatHistory[currentRoom]) {
+          const disconnectMessage = {
+            id: Date.now().toString(),
+            sender: "system",
+            text: `${username || "A user"} has disconnected`,
+            timestamp: new Date().toISOString(),
+            type: "notification",
+          };
+
+          chatHistory[currentRoom].push(disconnectMessage);
+          io.to(currentRoom).emit("message", disconnectMessage);
+        }
+      }
+    } catch (error) {
+      console.error("Error handling disconnect:", error);
+    }
   });
+});
+
+// Process-level error handling
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+  // Log to a file or monitoring service in production
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  // Log to a file or monitoring service in production
 });
 
 // Start the server
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+server
+  .listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  })
+  .on("error", (error) => {
+    console.error("Server failed to start:", error);
+  });
