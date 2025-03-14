@@ -1,3 +1,5 @@
+// CREATE A NEW BRANCH BEFORE MODIFYING THIS CODE!
+
 const express = require("express");
 const http = require("http");
 const socketIO = require("socket.io");
@@ -8,7 +10,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: "*", // In production, specify your frontend URL
+    origin: "*", // We'll put the frontend url or IP here
     methods: ["GET", "POST"],
   },
 });
@@ -45,7 +47,7 @@ app.get("/api/chat/:roomId", (req, res, next) => {
 
     res.json(chatHistory[roomId] || []);
   } catch (error) {
-    next(error); // Pass to the error handler
+    next(error); // Pass to the error handler to avoid server crash
   }
 });
 
