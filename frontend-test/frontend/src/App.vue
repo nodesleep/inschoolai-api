@@ -1,153 +1,6 @@
-<template>
-    <div class="flex flex-col h-screen max-w-4xl mx-auto">
-        <div
-            v-if="!isLoggedIn"
-            class="flex-1 flex flex-col justify-center items-center p-8"
-        >
-            <div class="w-full max-w-md bg-white p-8 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-6 text-center">
-                    Join a chat room
-                </h2>
-                <form @submit.prevent="joinRoom" class="space-y-4">
-                    <div>
-                        <label
-                            for="username"
-                            class="block text-sm font-medium text-gray-700 mb-1"
-                            >Username:</label
-                        >
-                        <input
-                            id="username"
-                            v-model="username"
-                            type="text"
-                            placeholder="Enter your username"
-                            required
-                            class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                    </div>
-                    <div>
-                        <label
-                            for="roomId"
-                            class="block text-sm font-medium text-gray-700 mb-1"
-                            >Room ID:</label
-                        >
-                        <input
-                            id="roomId"
-                            v-model="roomId"
-                            type="text"
-                            placeholder="Enter room ID"
-                            required
-                            class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                    </div>
-                    <button
-                        type="submit"
-                        class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition duration-200"
-                    >
-                        Join Room
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <div
-            v-else
-            class="flex-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden"
-        >
-            <div
-                class="bg-gray-100 border-b border-gray-200 p-4 flex justify-between items-center"
-            >
-                <h2 class="text-lg font-semibold">Room: {{ roomId }}</h2>
-                <button
-                    @click="leaveRoom"
-                    class="bg-red-600 text-white py-1 px-4 rounded-md hover:bg-red-700 transition duration-200"
-                >
-                    Leave Room
-                </button>
-            </div>
-
-            <div
-                ref="messagesContainer"
-                class="flex-1 p-4 overflow-y-auto flex flex-col gap-2"
-            >
-                <div
-                    v-if="messages.length === 0"
-                    class="text-center text-gray-500 my-auto"
-                >
-                    No messages yet. Start the conversation!
-                </div>
-
-                <div
-                    v-for="message in messages"
-                    :key="message.id"
-                    :class="[
-                        'max-w-[50%] p-3 rounded-lg',
-                        message.type === 'notification'
-                            ? 'self-center text-gray-500 italic w-[100%] text-center'
-                            : message.sender === username
-                              ? 'self-end bg-indigo-600 text-white'
-                              : 'self-start bg-gray-200',
-                    ]"
-                >
-                    <div class="flex justify-between mb-1 text-xs">
-                        <span class="font-semibold">{{
-                            message.sender === "system" ? "" : message.sender
-                        }}</span>
-                        <span
-                            :class="
-                                message.sender === username
-                                    ? 'ml-3 text-indigo-200'
-                                    : message.sender === 'system'
-                                      ? 'hidden'
-                                      : 'ml-3 text-gray-500'
-                            "
-                        >
-                            {{ formatTime(message.timestamp) }}
-                        </span>
-                    </div>
-                    <div>{{ message.text }}</div>
-                </div>
-            </div>
-
-            <div
-                v-if="typingUsers.length > 0"
-                class="px-4 py-2 text-sm italic text-gray-600"
-            >
-                {{ typingUsers.join(", ") }}
-                {{ typingUsers.length === 1 ? "is" : "are" }} typing...
-            </div>
-
-            <div class="border-t border-gray-200 p-4">
-                <form @submit.prevent="sendMessage" class="flex gap-2">
-                    <input
-                        v-model="newMessage"
-                        type="text"
-                        placeholder="Type a message..."
-                        @input="handleTyping"
-                        class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                        type="submit"
-                        class="bg-indigo-600 text-white py-2 px-6 rounded-md hover:bg-indigo-700 transition duration-200"
-                    >
-                        Send
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <div
-            v-if="error"
-            class="fixed top-4 right-4 bg-red-600 text-white px-4 py-3 rounded-md shadow-lg flex items-center gap-4 z-10"
-        >
-            {{ error }}
-            <button @click="error = ''" class="text-xl font-bold">
-                &times;
-            </button>
-        </div>
-    </div>
-</template>
-
 <script setup lang="ts">
+// This is merely a prototyping frontend to test API changes before moving to prod
+
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { io, Socket } from "socket.io-client";
 
@@ -372,3 +225,152 @@ watch(messages, () => {
     scrollToBottom();
 });
 </script>
+
+<template>
+    <div class="flex flex-col h-screen max-w-4xl mx-auto">
+        <div
+            v-if="!isLoggedIn"
+            class="flex-1 flex flex-col justify-center items-center p-8"
+        >
+            <div class="w-full max-w-md bg-white p-8 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-6 text-center">
+                    Join a chat room
+                </h2>
+                <form @submit.prevent="joinRoom" class="space-y-4">
+                    <div>
+                        <label
+                            for="username"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Username:</label
+                        >
+                        <input
+                            id="username"
+                            v-model="username"
+                            type="text"
+                            placeholder="Enter your username"
+                            required
+                            class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                    </div>
+                    <div>
+                        <label
+                            for="roomId"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Room ID:</label
+                        >
+                        <input
+                            id="roomId"
+                            v-model="roomId"
+                            type="text"
+                            placeholder="Enter room ID"
+                            required
+                            class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition duration-200"
+                    >
+                        Join Room
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            v-else
+            class="flex-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden"
+        >
+            <div
+                class="bg-gray-100 border-b border-gray-200 p-4 flex justify-between items-center"
+            >
+                <h2 class="text-lg font-semibold">Room: {{ roomId }}</h2>
+                <button
+                    @click="leaveRoom"
+                    class="bg-red-600 text-white py-1 px-4 rounded-md hover:bg-red-700 transition duration-200"
+                >
+                    Leave Room
+                </button>
+            </div>
+
+            <div
+                ref="messagesContainer"
+                class="flex-1 p-4 overflow-y-auto flex flex-col gap-2"
+            >
+                <div
+                    v-if="messages.length === 0"
+                    class="text-center text-gray-500 my-auto"
+                >
+                    No messages yet. Start the conversation!
+                </div>
+
+                <div
+                    v-for="message in messages"
+                    :key="message.id"
+                    :class="[
+                        'max-w-[50%] p-3 rounded-lg',
+                        message.type === 'notification'
+                            ? 'self-center text-gray-500 italic w-[100%] text-center'
+                            : message.sender === username
+                              ? 'self-end bg-indigo-600 text-white'
+                              : 'self-start bg-gray-200',
+                    ]"
+                >
+                    <div class="flex justify-between mb-1 text-xs">
+                        <span class="font-semibold">{{
+                            message.sender === "system" ? "" : message.sender
+                        }}</span>
+                        <span
+                            :class="
+                                message.sender === username
+                                    ? 'ml-3 text-indigo-200'
+                                    : message.sender === 'system'
+                                      ? 'hidden'
+                                      : 'ml-3 text-gray-500'
+                            "
+                        >
+                            {{ formatTime(message.timestamp) }}
+                        </span>
+                    </div>
+                    <div>{{ message.text }}</div>
+                </div>
+            </div>
+
+            <div
+                v-if="typingUsers.length > 0"
+                class="px-4 py-2 text-sm italic text-gray-600"
+            >
+                {{ typingUsers.join(", ") }}
+                {{ typingUsers.length === 1 ? "is" : "are" }} typing...
+            </div>
+
+            <div class="border-t border-gray-200 p-4">
+                <form @submit.prevent="sendMessage" class="flex gap-2">
+                    <input
+                        v-model="newMessage"
+                        type="text"
+                        placeholder="Type a message..."
+                        @input="handleTyping"
+                        class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                        type="submit"
+                        class="bg-indigo-600 text-white py-2 px-6 rounded-md hover:bg-indigo-700 transition duration-200"
+                    >
+                        Send
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div
+            v-if="error"
+            class="fixed top-4 right-4 bg-red-600 text-white px-4 py-3 rounded-md shadow-lg flex items-center gap-4 z-10"
+        >
+            {{ error }}
+            <button @click="error = ''" class="text-xl font-bold">
+                &times;
+            </button>
+        </div>
+    </div>
+</template>
