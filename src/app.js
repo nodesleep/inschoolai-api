@@ -1,24 +1,12 @@
-const express = require("express");
-const http = require("http");
-const socketIO = require("socket.io");
-const cors = require("cors");
-const admin = require("firebase-admin");
-const axios = require("axios");
-require("dotenv").config();
-
-// Initialize Firebase Admin SDK
-admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-});
-
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY;
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import cors from "cors";
 
 // Initialize Express app
 const app = express();
-const server = http.createServer(app);
-const io = socketIO(server, {
+const server = createServer(app);
+const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
@@ -28,181 +16,7 @@ const io = socketIO(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Registration endpoint for creating new Firebase accounts
-app.post("/api/register", async (req, res, next) => {
-  try {
-    const { email, password, displayName } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
-
-    console.log(`Attempting to register user: ${email}`);
-
-    // Firebase Auth REST API endpoint for creating a new user account
-    const registrationUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`;
-    console.log(
-      `Sending registration request to: ${registrationUrl.split("?")[0]}`,
-    );
-
-    // First, create the user account
-    const response = await axios.post(registrationUrl, {
-      email,
-      password,
-      returnSecureToken: true,
-    });
-
-    // Extract the user ID, ID token and email from Firebase response
-    const { localId, idToken, email: userEmail } = response.data;
-
-    // If displayName is provided, update the user profile
-    if (displayName) {
-      const updateProfileUrl = `https://identitytoolkit.googleapis.com/v1/accounts:update?key=${FIREBASE_API_KEY}`;
-
-      await axios.post(updateProfileUrl, {
-        idToken,
-        displayName,
-        returnSecureToken: true,
-      });
-
-      console.log(
-        `Updated profile for user: ${userEmail} with display name: ${displayName}`,
-      );
-    }
-
-    console.log(`Registration successful for: ${userEmail}`);
-
-    // Return the user info and JWT
-    res.status(201).json({
-      message: "User registered successfully",
-      uid: localId,
-      email: userEmail,
-      jwt: idToken,
-      displayName: displayName || null,
-    });
-  } catch (error) {
-    console.error("Firebase Registration Error Details:");
-
-    if (error.response) {
-      console.error("Status:", error.response.status);
-      console.error("Data:", JSON.stringify(error.response.data));
-      console.error("Headers:", JSON.stringify(error.response.headers));
-    } else if (error.request) {
-      console.error("No response received:", error.request);
-    } else {
-      console.error("Error:", error.message);
-    }
-
-    // Handle specific Firebase registration errors
-    if (error.response?.data?.error?.message) {
-      const firebaseError = error.response.data.error.message;
-      let errorMessage = "Registration failed";
-      let statusCode = 400;
-
-      // Map Firebase error codes to user-friendly messages
-      switch (firebaseError) {
-        case "EMAIL_EXISTS":
-          errorMessage = "The email address is already in use";
-          break;
-        case "OPERATION_NOT_ALLOWED":
-          errorMessage = "Password sign-up is disabled for this project";
-          break;
-        case "TOO_MANY_ATTEMPTS_TRY_LATER":
-          errorMessage = "Too many attempts, please try again later";
-          statusCode = 429;
-          break;
-        case "INVALID_API_KEY":
-          errorMessage = "Invalid API key configuration";
-          statusCode = 500;
-          break;
-        case "WEAK_PASSWORD":
-          errorMessage = "Password should be at least 6 characters";
-          break;
-        default:
-          errorMessage = "Registration failed";
-      }
-
-      return res.status(statusCode).json({
-        error: errorMessage,
-        code: firebaseError,
-      });
-    }
-
-    res.status(500).json({
-      error: "Registration failed",
-      message:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
-  }
-});
-
-// Firebase Authentication Endpoint with email/password
-app.post("/api/auth", async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
-
-    // Firebase Auth REST API endpoint for sign-in with email/password
-    const response = await axios.post(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
-      {
-        email,
-        password,
-        returnSecureToken: true,
-      },
-    );
-
-    // Extract the ID token and user email from the Firebase response
-    const { idToken, email: userEmail } = response.data;
-
-    // Return the user's email and the JWT (idToken)
-    res.json({
-      email: userEmail,
-      jwt: idToken,
-    });
-  } catch (error) {
-    console.error(
-      "Firebase Auth Error:",
-      error.response?.data || error.message,
-    );
-
-    // Handle specific Firebase auth errors
-    if (error.response?.data?.error?.message) {
-      const firebaseError = error.response.data.error.message;
-      let errorMessage = "Authentication failed";
-
-      // Map Firebase error codes to user-friendly messages
-      switch (firebaseError) {
-        case "EMAIL_NOT_FOUND":
-          errorMessage = "Email not found";
-          break;
-        case "INVALID_PASSWORD":
-          errorMessage = "Invalid password";
-          break;
-        case "USER_DISABLED":
-          errorMessage = "User account has been disabled";
-          break;
-        default:
-          errorMessage = "Authentication failed";
-      }
-
-      return res.status(401).json({
-        error: errorMessage,
-        code: firebaseError,
-      });
-    }
-
-    res.status(401).json({
-      error: "Authentication failed",
-      message:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
-  }
-});
+app.use(express.static("public")); // Serve static files from public directory
 
 // Global error handler for Express routes
 app.use((err, req, res, next) => {
@@ -213,27 +27,89 @@ app.use((err, req, res, next) => {
   });
 });
 
-// In-memory storage for messages (replace with database in production)
+// In-memory storage for messages, room info, and students
 const chatHistory = {};
+const roomTeachers = {}; // Map session IDs to teacher socket IDs
+const roomStudents = {}; // Map session IDs to connected students
+
+// Helper function to generate a consistent student ID
+function generateStudentId(username, sessionId) {
+  return `${sessionId}_${username.toLowerCase().trim()}`;
+}
 
 // Routes
 app.get("/", (req, res) => {
-  res.send("Chat server is running");
+  res.send("Session server is running");
 });
 
-// Get chat history for a specific room
-app.get("/api/chat/:roomId", (req, res, next) => {
+// Get chat history for a specific room and student (only available to teachers)
+app.get("/api/session/:sessionId/student/:studentId", (req, res, next) => {
   try {
-    const { roomId } = req.params;
+    const { sessionId, studentId } = req.params;
+    const { role } = req.query;
 
-    if (!roomId) {
-      return res.status(400).json({ error: "Room ID is required" });
+    if (!sessionId || !studentId) {
+      return res
+        .status(400)
+        .json({ error: "Session ID and Student ID are required" });
     }
 
-    res.json(chatHistory[roomId] || []);
+    // Only teachers can get chat history
+    if (role !== "teacher") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Get chat history for specific student
+    const studentChat =
+      chatHistory[sessionId]?.filter(
+        (msg) =>
+          msg.type === "notification" ||
+          msg.sender === studentId ||
+          (msg.role === "teacher" && msg.recipient === studentId)
+      ) || [];
+
+    res.json(studentChat);
   } catch (error) {
-    next(error); // Pass to the error handler
+    next(error);
   }
+});
+
+// Get all students in a session (only available to teachers)
+app.get("/api/session/:sessionId/students", (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { role } = req.query;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+
+    // Only teachers can get student list
+    if (role !== "teacher") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const students = roomStudents[sessionId] || [];
+    res.json(students);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/generate-session", (req, res) => {
+  // Create a 5-digit numerical code
+  let sessionId = "";
+  const digits = "0123456789";
+
+  for (let i = 0; i < 5; i++) {
+    sessionId += digits.charAt(Math.floor(Math.random() * digits.length));
+  }
+
+  // Initialize session
+  chatHistory[sessionId] = [];
+  roomStudents[sessionId] = [];
+
+  res.json({ sessionId });
 });
 
 // Error handling for Socket.IO server
@@ -243,136 +119,219 @@ io.engine.on("connection_error", (err) => {
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
-  // Get the client's IP address
-  const clientIp =
-    socket.handshake.headers["x-forwarded-for"] ||
-    socket.handshake.address ||
-    socket.conn.remoteAddress;
+  console.log("New client connected:", socket.id);
 
-  console.log("New client connected:", socket.id, "from IP:", clientIp);
-
-  // Setup error handling for this socket
+  // Error handling for this socket
   socket.on("error", (error) => {
     console.error("Socket error:", error);
   });
 
   // Handle joining a room
-  socket.on("join_room", (roomId, username) => {
-    try {
-      // Validate input
-      if (!roomId) {
-        socket.emit("error", { message: "Room ID is required" });
-        return;
+  socket.on(
+    "join_room",
+    (sessionId, username, role, persistentStudentId = null) => {
+      try {
+        // Validate input
+        if (!sessionId) {
+          socket.emit("error", { message: "Room ID is required" });
+          return;
+        }
+
+        const sanitizedUsername = username || "Anonymous";
+        const userRole = role || "student"; // Default to student
+
+        // Join the socket.io room
+        socket.join(sessionId);
+
+        // Generate or use provided persistent student ID
+        let studentId = persistentStudentId;
+        if (userRole === "student" && !studentId) {
+          studentId = generateStudentId(sanitizedUsername, sessionId);
+        }
+
+        // Store room info on the socket for disconnection handling
+        socket.userData = {
+          currentRoom: sessionId,
+          username: sanitizedUsername,
+          role: userRole,
+          socketId: socket.id,
+          persistentId: studentId, // Store the persistent ID for students
+        };
+
+        // Initialize room history if it doesn't exist
+        if (!chatHistory[sessionId]) {
+          chatHistory[sessionId] = [];
+        }
+
+        // Initialize student list if it doesn't exist
+        if (!roomStudents[sessionId]) {
+          roomStudents[sessionId] = [];
+        }
+
+        // If this is a teacher, store their socket ID
+        if (userRole === "teacher") {
+          roomTeachers[sessionId] = socket.id;
+
+          // Send the current student list to the teacher
+          socket.emit("student_list", roomStudents[sessionId]);
+        } else {
+          // If this is a student, check if they already exist using persistent ID
+          const existingStudentIndex = roomStudents[sessionId].findIndex(
+            (s) => s.persistentId === studentId
+          );
+
+          if (existingStudentIndex >= 0) {
+            // Update existing student info but preserve the persistent ID
+            const existingStudent =
+              roomStudents[sessionId][existingStudentIndex];
+            roomStudents[sessionId][existingStudentIndex] = {
+              ...existingStudent,
+              id: socket.id, // Update to the new socket ID
+              username: sanitizedUsername,
+              status: "online",
+              lastActive: new Date().toISOString(),
+            };
+
+            console.log(
+              `Student ${sanitizedUsername} reconnected to room ${sessionId} with ID ${studentId}`
+            );
+          } else {
+            // Add new student to the list with persistent ID
+            const studentInfo = {
+              id: socket.id,
+              persistentId: studentId, // Store persistent ID
+              username: sanitizedUsername,
+              status: "online",
+              lastActive: new Date().toISOString(),
+            };
+            roomStudents[sessionId].push(studentInfo);
+
+            console.log(
+              `New student ${sanitizedUsername} joined room ${sessionId} with ID ${studentId}`
+            );
+          }
+
+          // Notify teacher about new/updated student
+          if (roomTeachers[sessionId]) {
+            io.to(roomTeachers[sessionId]).emit(
+              "student_list",
+              roomStudents[sessionId]
+            );
+          }
+        }
+
+        // Notify about user joining
+        const joinMessage = {
+          id: Date.now().toString(),
+          sender: "system",
+          text: `${sanitizedUsername} has joined as ${userRole}`,
+          timestamp: new Date().toISOString(),
+          type: "notification",
+          role: userRole,
+        };
+
+        chatHistory[sessionId].push(joinMessage);
+
+        // Only send the message to the teacher and the joining user
+        if (roomTeachers[sessionId]) {
+          io.to(roomTeachers[sessionId]).emit("message", joinMessage);
+        }
+
+        socket.emit("message", joinMessage);
+      } catch (error) {
+        console.error("Error joining room:", error);
+        socket.emit("error", { message: "Failed to join room" });
       }
-
-      const sanitizedUsername = username || "Anonymous";
-      const clientIp =
-        socket.handshake.headers["x-forwarded-for"] ||
-        socket.handshake.address ||
-        socket.conn.remoteAddress;
-
-      // Join the socket.io room
-      socket.join(roomId);
-
-      // Store room info and IP on the socket for tracking and disconnection handling
-      socket.userData = {
-        currentRoom: roomId,
-        username: sanitizedUsername,
-        ip: clientIp,
-      };
-
-      // Initialize room history if it doesn't exist
-      if (!chatHistory[roomId]) {
-        chatHistory[roomId] = [];
-      }
-
-      // Send room history to the newly connected user
-      socket.emit("chat_history", chatHistory[roomId]);
-
-      // Notify others that user has joined
-      const joinMessage = {
-        id: Date.now().toString(),
-        sender: "system",
-        text: `${sanitizedUsername} has joined the room`,
-        timestamp: new Date().toISOString(),
-        type: "notification",
-      };
-
-      chatHistory[roomId].push(joinMessage);
-      io.to(roomId).emit("message", joinMessage);
-
-      console.log(
-        `${sanitizedUsername} (IP: ${clientIp}) joined room: ${roomId}`,
-      );
-    } catch (error) {
-      console.error("Error joining room:", error);
-      socket.emit("error", { message: "Failed to join room" });
     }
-  });
+  );
 
-  // Handle send_message event with IP logging
+  // Handle new messages
   socket.on("send_message", (messageData) => {
     try {
-      // Log received message data for debugging
-      console.log("Received message data:", JSON.stringify(messageData));
-
-      // Get the client's IP address
-      const clientIp =
-        socket.userData?.ip ||
-        socket.handshake.headers["x-forwarded-for"] ||
-        socket.handshake.address ||
-        socket.conn.remoteAddress;
-
-      // Validate input
-      if (!messageData || !messageData.roomId || !messageData.message) {
-        console.error("Invalid message format received:", messageData);
+      if (!messageData || !messageData.sessionId || !messageData.message) {
         socket.emit("error", { message: "Invalid message format" });
         return;
       }
 
-      const { roomId, message } = messageData;
+      const { sessionId, message, recipient, studentId } = messageData;
+      const userRole = socket.userData?.role || "student";
 
-      // Further validation
-      if (!message.sender || !message.text) {
-        console.error("Message missing required fields:", message);
-        socket.emit("error", {
-          message: "Message must include sender and text",
-        });
-        return;
-      }
+      // Use persistent ID if available for students, otherwise use socket ID
+      const senderId =
+        userRole === "student" && studentId ? studentId : socket.id;
 
       // Check if room exists
-      if (!chatHistory[roomId]) {
-        chatHistory[roomId] = [];
+      if (!chatHistory[sessionId]) {
+        chatHistory[sessionId] = [];
       }
 
       // Format the message
       const formattedMessage = {
         id: Date.now().toString(),
-        sender: message.sender || "Anonymous",
+        sender: senderId, // Use persistent ID for students when available
+        senderName: message.sender || "Anonymous", // Add sender name for display
         text:
           typeof message.text === "string"
             ? message.text
             : String(message.text || ""),
         timestamp: new Date().toISOString(),
         type: "message",
+        role: userRole,
+        recipient: recipient || null,
       };
 
       // Save to history
-      chatHistory[roomId].push(formattedMessage);
+      chatHistory[sessionId].push(formattedMessage);
 
       // Limit history size (optional)
-      if (chatHistory[roomId].length > 100) {
-        chatHistory[roomId] = chatHistory[roomId].slice(-100);
+      if (chatHistory[sessionId].length > 100) {
+        chatHistory[sessionId] = chatHistory[sessionId].slice(-100);
       }
 
-      // Log message with IP address
-      console.log(
-        `Message from ${message.sender} (IP: ${clientIp}) in room ${roomId}: ${message.text}`,
-      );
+      // If sender is teacher, send only to the specific student
+      if (userRole === "teacher" && recipient) {
+        // Find student's current socket ID using their persistent ID
+        const student = roomStudents[sessionId]?.find(
+          (s) => s.persistentId === recipient || s.id === recipient
+        );
+        if (student) {
+          io.to(student.id).emit("message", {
+            ...formattedMessage,
+            sender: "teacher", // Override sender ID with "teacher" for client display
+          });
+        }
+        socket.emit("message", formattedMessage); // Also send to teacher
+      } else if (userRole === "student") {
+        // If sender is student, send only to teacher
+        if (roomTeachers[sessionId]) {
+          io.to(roomTeachers[sessionId]).emit("message", formattedMessage);
+        }
+        socket.emit("message", {
+          ...formattedMessage,
+          sender: socket.userData.username, // Use username for display on student side
+        }); // Also send to student
+      }
 
-      // Broadcast to everyone in the room
-      io.to(roomId).emit("message", formattedMessage);
+      // Update student's last activity time
+      if (userRole === "student") {
+        const studentIndex = roomStudents[sessionId]?.findIndex(
+          (s) =>
+            (studentId && s.persistentId === studentId) || s.id === socket.id
+        );
+        if (studentIndex >= 0) {
+          roomStudents[sessionId][studentIndex].lastActive =
+            new Date().toISOString();
+          roomStudents[sessionId][studentIndex].status = "active";
+
+          // Notify teacher about updated student status
+          if (roomTeachers[sessionId]) {
+            io.to(roomTeachers[sessionId]).emit(
+              "student_list",
+              roomStudents[sessionId]
+            );
+          }
+        }
+      }
     } catch (error) {
       console.error("Error handling message:", error);
       socket.emit("error", { message: "Failed to process message" });
@@ -381,78 +340,187 @@ io.on("connection", (socket) => {
 
   // Handle typing status
   socket.on("typing", (data) => {
-    const { roomId, username, isTyping } = data;
+    const { sessionId, username, isTyping, recipient, studentId } = data;
+    const userRole = socket.userData?.role || "student";
 
-    // Broadcast typing status to everyone else in the room
-    socket.to(roomId).emit("user_typing", { username, isTyping });
+    // If student is typing, only notify teacher
+    if (userRole === "student" && roomTeachers[sessionId]) {
+      // Use persistent ID if available, otherwise use socket ID
+      const typingStudentId = studentId || socket.id;
+      io.to(roomTeachers[sessionId]).emit("user_typing", {
+        username,
+        isTyping,
+        studentId: typingStudentId,
+      });
+    }
+    // If teacher is typing, notify specific student
+    else if (userRole === "teacher" && recipient) {
+      // Find student's current socket ID using their persistent ID
+      const student = roomStudents[sessionId]?.find(
+        (s) => s.persistentId === recipient || s.id === recipient
+      );
+      if (student) {
+        io.to(student.id).emit("user_typing", { username, isTyping });
+      }
+    }
+  });
+
+  // Handle selecting a student to chat with (teacher only)
+  socket.on("select_student", (sessionId, studentId) => {
+    try {
+      const userRole = socket.userData?.role;
+
+      if (userRole !== "teacher") {
+        socket.emit("error", { message: "Only teachers can select students" });
+        return;
+      }
+
+      // Find student using either persistent ID or socket ID
+      const student = roomStudents[sessionId]?.find(
+        (s) => s.persistentId === studentId || s.id === studentId
+      );
+      const effectiveStudentId = student
+        ? student.persistentId || student.id
+        : studentId;
+
+      // Get chat history for specific student
+      const studentChat =
+        chatHistory[sessionId]?.filter(
+          (msg) =>
+            msg.type === "notification" ||
+            msg.sender === effectiveStudentId ||
+            (msg.role === "teacher" && msg.recipient === effectiveStudentId)
+        ) || [];
+
+      // Send chat history to teacher with the ID that was requested
+      socket.emit("student_chat_history", { studentId, chat: studentChat });
+    } catch (error) {
+      console.error("Error selecting student:", error);
+      socket.emit("error", { message: "Failed to select student" });
+    }
   });
 
   // Handle user leaving
-  socket.on("leave_room", (roomId, username) => {
-    // Notify others that user has left
-    if (chatHistory[roomId]) {
+  socket.on("leave_room", (sessionId, username, studentId = null) => {
+    const userRole = socket.userData?.role || "student";
+
+    // Notify about user leaving
+    if (chatHistory[sessionId]) {
       const leaveMessage = {
         id: Date.now().toString(),
         sender: "system",
         text: `${username} has left the room`,
         timestamp: new Date().toISOString(),
         type: "notification",
+        role: userRole,
       };
 
-      chatHistory[roomId].push(leaveMessage);
-      io.to(roomId).emit("message", leaveMessage);
+      chatHistory[sessionId].push(leaveMessage);
+
+      // If teacher left, notify all students
+      if (userRole === "teacher") {
+        io.to(sessionId).emit("message", leaveMessage);
+        delete roomTeachers[sessionId];
+      }
+      // If student left, notify only teacher and update student list
+      else if (roomTeachers[sessionId]) {
+        io.to(roomTeachers[sessionId]).emit("message", leaveMessage);
+
+        // Remove student from list using persistent ID if provided
+        if (roomStudents[sessionId]) {
+          if (studentId) {
+            roomStudents[sessionId] = roomStudents[sessionId].filter(
+              (s) => s.persistentId !== studentId
+            );
+          } else {
+            roomStudents[sessionId] = roomStudents[sessionId].filter(
+              (s) => s.id !== socket.id
+            );
+          }
+
+          // Notify teacher about updated student list
+          io.to(roomTeachers[sessionId]).emit(
+            "student_list",
+            roomStudents[sessionId]
+          );
+        }
+      }
     }
 
-    socket.leave(roomId);
-    console.log(`${username} left room: ${roomId}`);
+    socket.leave(sessionId);
+    console.log(`${username} left room: ${sessionId}`);
   });
 
   // Handle disconnection
   socket.on("disconnect", () => {
-    try {
-      console.log("Client disconnected:", socket.id);
+    const userData = socket.userData;
 
-      // Clean up user data and notify room if needed
-      if (socket.userData && socket.userData.currentRoom) {
-        const { currentRoom, username } = socket.userData;
+    if (userData && userData.currentRoom) {
+      // If this was a teacher, remove them from the room teachers map
+      if (
+        userData.role === "teacher" &&
+        roomTeachers[userData.currentRoom] === socket.id
+      ) {
+        delete roomTeachers[userData.currentRoom];
+      }
+      // If this was a student, update their status in the student list
+      else if (userData.role === "student") {
+        const sessionId = userData.currentRoom;
 
-        // Notify room that user has disconnected
-        if (chatHistory[currentRoom]) {
-          const disconnectMessage = {
-            id: Date.now().toString(),
-            sender: "system",
-            text: `${username || "A user"} has disconnected`,
-            timestamp: new Date().toISOString(),
-            type: "notification",
-          };
+        // Try to find student by persistent ID first, then by socket ID
+        const studentIndex = roomStudents[sessionId]?.findIndex(
+          (s) =>
+            (userData.persistentId &&
+              s.persistentId === userData.persistentId) ||
+            s.id === socket.id
+        );
 
-          chatHistory[currentRoom].push(disconnectMessage);
-          io.to(currentRoom).emit("message", disconnectMessage);
+        if (studentIndex >= 0) {
+          roomStudents[sessionId][studentIndex].status = "offline";
+          roomStudents[sessionId][studentIndex].lastActive =
+            new Date().toISOString();
+
+          // Notify teacher about updated student status
+          if (roomTeachers[sessionId]) {
+            io.to(roomTeachers[sessionId]).emit(
+              "student_list",
+              roomStudents[sessionId]
+            );
+          }
         }
       }
-    } catch (error) {
-      console.error("Error handling disconnect:", error);
+
+      // Add disconnect message
+      if (chatHistory[userData.currentRoom]) {
+        const disconnectMessage = {
+          id: Date.now().toString(),
+          sender: "system",
+          text: `${userData.username} has disconnected`,
+          timestamp: new Date().toISOString(),
+          type: "notification",
+          role: userData.role,
+        };
+
+        chatHistory[userData.currentRoom].push(disconnectMessage);
+
+        // Notify appropriate users
+        if (userData.role === "teacher") {
+          io.to(userData.currentRoom).emit("message", disconnectMessage);
+        } else if (roomTeachers[userData.currentRoom]) {
+          io.to(roomTeachers[userData.currentRoom]).emit(
+            "message",
+            disconnectMessage
+          );
+        }
+      }
     }
+
+    console.log("Client disconnected:", socket.id);
   });
-});
-
-// Process-level error handling
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
-  // Log to a file or monitoring service in production
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
-  // Log to a file or monitoring service in production
 });
 
 // Start the server
-const PORT = process.env.PORT || 3001;
-server
-  .listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  })
-  .on("error", (error) => {
-    console.error("Server failed to start:", error);
-  });
+const PORT = process.env.PORT || 3023;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
