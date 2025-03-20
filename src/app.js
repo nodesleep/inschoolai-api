@@ -281,8 +281,8 @@ async function saveMessage(message) {
         message.senderName || null,
         message.text,
         message.timestamp,
-        message.type,
-        message.role,
+        message.type || "message", // Default to "message" if type is not provided
+        message.role || "system", // Default to "system" if role is not provided
         message.recipient || null,
       ]
     );
@@ -299,12 +299,18 @@ async function saveMessage(message) {
       senderName: message.senderName,
       text: message.text,
       timestamp: message.timestamp,
-      type: message.type,
-      role: message.role,
+      type: message.type || "message",
+      role: message.role || "system",
       recipient: message.recipient,
     };
 
     chatCache[message.sessionId].push(cacheMessage);
+
+    console.log(
+      `Saved message to DB: ${message.type || "message"} from ${
+        message.senderName
+      } (${message.role || "system"})`
+    );
   } catch (error) {
     console.error("Error saving message:", error);
     // Don't throw - we want to continue execution even if there's a DB error
@@ -560,6 +566,138 @@ io.on("connection", (socket) => {
     }
   );
 
+  // Handle new messages
+  socket.on("send_message", async (messageData) => {
+    try {
+      console.log(
+        "Received send_message:",
+        JSON.stringify(messageData, null, 2)
+      );
+
+      if (!messageData || !messageData.sessionId || !messageData.message) {
+        socket.emit("error", { message: "Invalid message format" });
+        return;
+      }
+
+      const { sessionId, message, recipient, studentId } = messageData;
+      const userRole = socket.userData?.role || "student";
+
+      // Use persistent ID if available for students, otherwise use socket ID
+      const senderId =
+        userRole === "student" && studentId ? studentId : socket.id;
+
+      // Format the message
+      const formattedMessage = {
+        id: message.id || generateUniqueMessageId(),
+        sessionId: sessionId,
+        sender: senderId,
+        senderName: message.sender || socket.userData?.username || "Anonymous",
+        text:
+          typeof message.text === "string"
+            ? message.text
+            : String(message.text || ""),
+        timestamp: message.timestamp || new Date().toISOString(),
+        type: message.type || "message", // Default to "message" if not provided
+        role: message.role || userRole, // Use message.role if provided, otherwise use socket's role
+        recipient: recipient || null,
+      };
+
+      console.log("Saving message to database:", {
+        id: formattedMessage.id,
+        sessionId: formattedMessage.sessionId,
+        sender: formattedMessage.sender,
+        senderName: formattedMessage.senderName,
+        type: formattedMessage.type,
+        role: formattedMessage.role,
+        recipient: formattedMessage.recipient,
+      });
+
+      // Save to database
+      await saveMessage(formattedMessage);
+
+      // Special handling for AI messages
+      if (
+        formattedMessage.role === "ai" ||
+        formattedMessage.sender === "ai-assistant"
+      ) {
+        console.log(
+          "Processing AI message:",
+          formattedMessage.text.substring(0, 50)
+        );
+        // Send to teacher
+        if (roomTeachers[sessionId]) {
+          io.to(roomTeachers[sessionId]).emit("message", formattedMessage);
+        }
+
+        // Send to student recipient
+        if (formattedMessage.recipient) {
+          const student = roomStudents[sessionId]?.find(
+            (s) =>
+              s.persistentId === formattedMessage.recipient ||
+              s.id === formattedMessage.recipient
+          );
+          if (student) {
+            io.to(student.id).emit("message", formattedMessage);
+          }
+        }
+      }
+      // If sender is teacher, send only to the specific student
+      else if (userRole === "teacher" && recipient) {
+        // Find student's current socket ID using their persistent ID
+        const student = roomStudents[sessionId]?.find(
+          (s) => s.persistentId === recipient || s.id === recipient
+        );
+        if (student) {
+          io.to(student.id).emit("message", {
+            ...formattedMessage,
+            sender: "teacher",
+          });
+        }
+        socket.emit("message", formattedMessage);
+      }
+      // If sender is student, send to teacher and back to student
+      else if (userRole === "student") {
+        // Send to teacher
+        if (roomTeachers[sessionId]) {
+          io.to(roomTeachers[sessionId]).emit("message", formattedMessage);
+        }
+
+        // Send back to student (if needed - they might already have added it locally)
+        socket.emit("message", {
+          ...formattedMessage,
+          sender: socket.userData.username,
+        });
+      }
+
+      // Update student's last activity time if this is a student message
+      if (userRole === "student") {
+        const studentIndex = roomStudents[sessionId]?.findIndex(
+          (s) =>
+            (studentId && s.persistentId === studentId) || s.id === socket.id
+        );
+        if (studentIndex >= 0) {
+          roomStudents[sessionId][studentIndex].lastActive =
+            new Date().toISOString();
+          roomStudents[sessionId][studentIndex].status = "active";
+
+          // Update in database
+          await saveStudent(roomStudents[sessionId][studentIndex]);
+
+          // Notify teacher about updated student status
+          if (roomTeachers[sessionId]) {
+            io.to(roomTeachers[sessionId]).emit(
+              "student_list",
+              roomStudents[sessionId]
+            );
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error handling message:", error);
+      socket.emit("error", { message: "Failed to process message" });
+    }
+  });
+
   // Handle typing status
   socket.on("typing", (data) => {
     const { sessionId, username, isTyping, recipient, studentId } = data;
@@ -617,53 +755,36 @@ io.on("connection", (socket) => {
         `Teacher selected student: ${student.username} with ID: ${effectiveStudentId}`
       );
 
-      // Log all database tables and structure for debugging
-      console.log("Checking database state...");
-
-      // Check if we have any messages at all in this session
-      const allSessionMessages = await db.all(
-        "SELECT * FROM messages WHERE session_id = ?",
-        [sessionId]
+      // The revised query - include student's username too to catch all messages
+      const messages = await db.all(
+        `SELECT * FROM messages 
+         WHERE session_id = ? AND (
+           -- Include all system notifications
+           type = 'notification' OR
+           -- Include messages sent by this student (by ID or username)
+           sender = ? OR
+           sender_name = ? OR
+           -- Include messages where this student is the recipient
+           recipient = ? OR
+           -- Include AI messages triggered by this student
+           (sender = 'ai-assistant' AND recipient = ?)
+         )
+         ORDER BY timestamp ASC`,
+        [
+          sessionId,
+          effectiveStudentId,
+          student.username,
+          effectiveStudentId,
+          effectiveStudentId,
+        ]
       );
 
       console.log(
-        `Total messages in session ${sessionId}: ${allSessionMessages.length}`
+        `Found ${messages.length} relevant messages for student ${student.username}`
       );
 
-      if (allSessionMessages.length > 0) {
-        // Log message types and roles to understand what's in the database
-        const messageTypes = {};
-        const messageRoles = {};
-        const senderCounts = {};
-
-        allSessionMessages.forEach((msg) => {
-          messageTypes[msg.type] = (messageTypes[msg.type] || 0) + 1;
-          messageRoles[msg.role] = (messageRoles[msg.role] || 0) + 1;
-          senderCounts[msg.sender] = (senderCounts[msg.sender] || 0) + 1;
-        });
-
-        console.log("Message types in database:", messageTypes);
-        console.log("Message roles in database:", messageRoles);
-        console.log("Sender counts:", senderCounts);
-
-        // Log a few sample messages
-        console.log("Sample messages:");
-        allSessionMessages.slice(0, 5).forEach((msg, i) => {
-          console.log(`Message ${i + 1}:`, {
-            id: msg.id,
-            type: msg.type,
-            role: msg.role,
-            sender: msg.sender,
-            sender_name: msg.sender_name,
-            recipient: msg.recipient,
-            text:
-              msg.text.substring(0, 50) + (msg.text.length > 50 ? "..." : ""),
-          });
-        });
-      }
-
-      // Console output for bug checking
-      const studentChat = allSessionMessages.map((msg) => ({
+      // Format the messages for the frontend
+      const studentChat = messages.map((msg) => ({
         id: msg.id,
         sender: msg.sender,
         senderName: msg.sender_name,
@@ -674,107 +795,11 @@ io.on("connection", (socket) => {
         recipient: msg.recipient,
       }));
 
-      console.log(
-        `Sending ${studentChat.length} messages to teacher for student: ${student.username}`
-      );
-
-      // Send ALL chat messages to teacher for now (for debugging)
+      // Send chat history to teacher
       socket.emit("student_chat_history", { studentId, chat: studentChat });
     } catch (error) {
       console.error("Error selecting student:", error);
       socket.emit("error", { message: "Failed to select student" });
-    }
-  });
-
-  // Handle kicking a student from the session
-  socket.on("kick_student", async (data) => {
-    try {
-      const { sessionId, studentId, persistentId } = data;
-      const userRole = socket.userData?.role;
-
-      // Only teachers can kick students
-      if (userRole !== "teacher") {
-        socket.emit("error", { message: "Only teachers can remove students" });
-        return;
-      }
-
-      // Find the student using either socket ID or persistent ID
-      const studentToKick = roomStudents[sessionId]?.find(
-        (s) => s.id === studentId || s.persistentId === persistentId
-      );
-
-      if (!studentToKick) {
-        socket.emit("student_kicked", {
-          studentId,
-          success: false,
-          message: "Student not found",
-        });
-        return;
-      }
-
-      // Create a kick message to notify everyone
-      const kickMessage = {
-        id: generateUniqueMessageId(),
-        sessionId: sessionId,
-        sender: "system",
-        senderName: "System",
-        text: `${studentToKick.username} has been removed from the session`,
-        timestamp: new Date().toISOString(),
-        type: "notification",
-        role: "system",
-      };
-
-      // Save to database
-      await saveMessage(kickMessage);
-
-      // Notify the student being kicked
-      io.to(studentToKick.id).emit("kicked_from_session", {
-        message: "You have been removed from this session by the teacher",
-      });
-
-      // Disconnect the student's socket
-      const studentSocket = io.sockets.sockets.get(studentToKick.id);
-      if (studentSocket) {
-        studentSocket.disconnect(true);
-      }
-
-      // Update student status in database
-      studentToKick.status = "kicked";
-      studentToKick.lastActive = new Date().toISOString();
-      await db.run(
-        `UPDATE students SET status = ?, last_active = ? WHERE socket_id = ? OR persistent_id = ?`,
-        [
-          "kicked",
-          new Date().toISOString(),
-          studentToKick.id,
-          studentToKick.persistentId,
-        ]
-      );
-
-      // Remove student from the room's student list
-      roomStudents[sessionId] = roomStudents[sessionId].filter(
-        (s) =>
-          s.id !== studentToKick.id &&
-          s.persistentId !== studentToKick.persistentId
-      );
-
-      // Notify teacher about successful kick and updated student list
-      socket.emit("student_kicked", { studentId, success: true });
-      socket.emit("student_list", roomStudents[sessionId]);
-
-      // Also send the kick notification message to the teacher
-      socket.emit("message", kickMessage);
-
-      console.log(
-        `Student ${studentToKick.username} kicked from session ${sessionId}`
-      );
-    } catch (error) {
-      console.error("Error kicking student:", error);
-      socket.emit("student_kicked", {
-        studentId,
-        success: false,
-        message: "Failed to kick student",
-      });
     }
   });
 
