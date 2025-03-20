@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 import cors from "cors";
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
+import { v4 as uuidv4 } from "uuid"; // Add this import for UUID generation
 
 // Database initialization
 let db;
@@ -76,9 +77,18 @@ const chatCache = {};
 const roomTeachers = {};
 const roomStudents = {};
 
-// Helper function to generate a consistent student ID
+// Helper function to generate a consistent student ID - Now with added randomness
 function generateStudentId(username, sessionId) {
-  return `${sessionId}_${username.toLowerCase().trim()}`;
+  // Generate a truly unique ID by combining session, username, and a unique random string
+  return `${sessionId}_${username.toLowerCase().trim()}_${uuidv4().substring(
+    0,
+    8
+  )}`;
+}
+
+// Helper function to generate a unique message ID
+function generateUniqueMessageId() {
+  return `${Date.now()}_${uuidv4().substring(0, 8)}`;
 }
 
 // Routes
@@ -255,75 +265,90 @@ async function loadStudents(sessionId) {
 
 // Helper function to save message to database
 async function saveMessage(message) {
-  await db.run(
-    `INSERT INTO messages (id, session_id, sender, sender_name, text, timestamp, type, role, recipient)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      message.id,
-      message.sessionId,
-      message.sender,
-      message.senderName || null,
-      message.text,
-      message.timestamp,
-      message.type,
-      message.role,
-      message.recipient || null,
-    ]
-  );
-
-  // Update cache
-  if (!chatCache[message.sessionId]) {
-    chatCache[message.sessionId] = [];
+  // Ensure message has a unique ID
+  if (!message.id || message.id.indexOf("_") === -1) {
+    message.id = generateUniqueMessageId();
   }
 
-  // Store in cache with the format expected by the frontend
-  const cacheMessage = {
-    id: message.id,
-    sender: message.sender,
-    senderName: message.senderName,
-    text: message.text,
-    timestamp: message.timestamp,
-    type: message.type,
-    role: message.role,
-    recipient: message.recipient,
-  };
+  try {
+    await db.run(
+      `INSERT INTO messages (id, session_id, sender, sender_name, text, timestamp, type, role, recipient)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        message.id,
+        message.sessionId,
+        message.sender,
+        message.senderName || null,
+        message.text,
+        message.timestamp,
+        message.type,
+        message.role,
+        message.recipient || null,
+      ]
+    );
 
-  chatCache[message.sessionId].push(cacheMessage);
+    // Update cache
+    if (!chatCache[message.sessionId]) {
+      chatCache[message.sessionId] = [];
+    }
+
+    // Store in cache with the format expected by the frontend
+    const cacheMessage = {
+      id: message.id,
+      sender: message.sender,
+      senderName: message.senderName,
+      text: message.text,
+      timestamp: message.timestamp,
+      type: message.type,
+      role: message.role,
+      recipient: message.recipient,
+    };
+
+    chatCache[message.sessionId].push(cacheMessage);
+  } catch (error) {
+    console.error("Error saving message:", error);
+    // Don't throw - we want to continue execution even if there's a DB error
+  }
 }
 
 // Helper function to save or update student
 async function saveStudent(student) {
-  const existing = await db.get(
-    "SELECT * FROM students WHERE persistent_id = ?",
-    [student.persistentId]
-  );
+  try {
+    const existing = await db.get(
+      "SELECT * FROM students WHERE persistent_id = ?",
+      [student.persistentId]
+    );
 
-  if (existing) {
-    await db.run(
-      `UPDATE students 
-       SET username = ?, status = ?, last_active = ?, socket_id = ?
-       WHERE persistent_id = ?`,
-      [
-        student.username,
-        student.status,
-        student.lastActive,
-        student.id,
-        student.persistentId,
-      ]
-    );
-  } else {
-    await db.run(
-      `INSERT INTO students (persistent_id, session_id, username, status, last_active, socket_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        student.persistentId,
-        student.sessionId,
-        student.username,
-        student.status,
-        student.lastActive,
-        student.id,
-      ]
-    );
+    if (existing) {
+      await db.run(
+        `UPDATE students 
+         SET username = ?, status = ?, last_active = ?, socket_id = ?
+         WHERE persistent_id = ?`,
+        [
+          student.username,
+          student.status,
+          student.lastActive,
+          student.id,
+          student.persistentId,
+        ]
+      );
+    } else {
+      await db.run(
+        `INSERT INTO students (persistent_id, session_id, username, status, last_active, socket_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          student.persistentId,
+          student.sessionId,
+          student.username,
+          student.status,
+          student.lastActive,
+          student.id,
+        ]
+      );
+    }
+  } catch (error) {
+    console.error("Error saving student:", error);
+    // Don't throw - we want to continue execution even if there's a DB error
   }
 }
 
@@ -355,8 +380,43 @@ io.on("connection", (socket) => {
 
         // Generate or use provided persistent student ID
         let studentId = persistentStudentId;
-        if (userRole === "student" && !studentId) {
-          studentId = generateStudentId(sanitizedUsername, sessionId);
+        if (userRole === "student") {
+          // First, check if a user with this username already exists in this session
+          const existingStudentByName = roomStudents[sessionId]?.find(
+            (s) => s.username.toLowerCase() === sanitizedUsername.toLowerCase()
+          );
+
+          if (existingStudentByName) {
+            // If we found a student with the same name, use their persistent ID
+            studentId = existingStudentByName.persistentId;
+            console.log(
+              `Using existing ID for ${sanitizedUsername}: ${studentId}`
+            );
+          } else if (!studentId) {
+            // No existing student with this name and no ID provided - generate a new ID
+            studentId = generateStudentId(sanitizedUsername, sessionId);
+            console.log(
+              `Generated new ID for ${sanitizedUsername}: ${studentId}`
+            );
+          } else {
+            // ID was provided - verify it's valid and not used by another username
+            const existingStudent = await db.get(
+              "SELECT * FROM students WHERE persistent_id = ? AND session_id = ?",
+              [studentId, sessionId]
+            );
+
+            if (
+              existingStudent &&
+              existingStudent.username.toLowerCase() !==
+                sanitizedUsername.toLowerCase()
+            ) {
+              // If the ID exists but with a different username, generate a new ID
+              studentId = generateStudentId(sanitizedUsername, sessionId);
+              console.log(
+                `Regenerated ID for ${sanitizedUsername}: ${studentId}`
+              );
+            }
+          }
         }
 
         // Store room info on the socket for disconnection handling
@@ -452,7 +512,7 @@ io.on("connection", (socket) => {
 
         // Notify about user joining
         const joinMessage = {
-          id: Date.now().toString(),
+          id: generateUniqueMessageId(),
           sessionId: sessionId,
           sender: "system",
           senderName: "System",
@@ -472,35 +532,26 @@ io.on("connection", (socket) => {
 
         socket.emit("message", joinMessage);
 
-        // *** IMPORTANT: THIS IS THE KEY CHANGE ***
-        // Send chat history to the joining user
-        // Now we send ALL messages to students instead of filtering
+        // Send appropriate chat history
         if (userRole === "student") {
-          // Send ALL chat history to students
-          const formattedHistory = chatCache[sessionId].map((msg) => ({
-            id: msg.id || Date.now().toString(),
-            sender: msg.sender,
-            senderName: msg.senderName,
-            text: msg.text,
-            timestamp: msg.timestamp,
-            type: msg.type,
-            role: msg.role,
-          }));
+          // For students, filter messages to only show messages relevant to them
+          const relevantMessages = chatCache[sessionId].filter(
+            (msg) =>
+              // Show all system notifications
+              msg.type === "notification" ||
+              // Show messages from ALL students (for class-wide visibility)
+              msg.role === "student" ||
+              // Show teacher messages to this student or to everyone (no recipient means broadcast)
+              (msg.role === "teacher" &&
+                (msg.recipient === studentId || !msg.recipient)) ||
+              // Show AI messages intended for this student
+              (msg.sender === "ai-assistant" && msg.recipient === studentId)
+          );
 
-          socket.emit("chat_history", formattedHistory);
+          socket.emit("chat_history", relevantMessages);
         } else if (userRole === "teacher") {
-          // Teachers already get all messages
-          const formattedHistory = chatCache[sessionId].map((msg) => ({
-            id: msg.id || Date.now().toString(),
-            sender: msg.sender,
-            senderName: msg.senderName,
-            text: msg.text,
-            timestamp: msg.timestamp,
-            type: msg.type,
-            role: msg.role,
-          }));
-
-          socket.emit("chat_history", formattedHistory);
+          // Teachers see all messages
+          socket.emit("chat_history", chatCache[sessionId]);
         }
       } catch (error) {
         console.error("Error joining room:", error);
@@ -508,93 +559,6 @@ io.on("connection", (socket) => {
       }
     }
   );
-
-  // Handle new messages
-  socket.on("send_message", async (messageData) => {
-    try {
-      if (!messageData || !messageData.sessionId || !messageData.message) {
-        socket.emit("error", { message: "Invalid message format" });
-        return;
-      }
-
-      const { sessionId, message, recipient, studentId } = messageData;
-      const userRole = socket.userData?.role || "student";
-
-      // Use persistent ID if available for students, otherwise use socket ID
-      const senderId =
-        userRole === "student" && studentId ? studentId : socket.id;
-
-      // Format the message
-      const formattedMessage = {
-        id: message.id || Date.now().toString(),
-        sessionId: sessionId,
-        sender: senderId,
-        senderName: message.sender || socket.userData?.username || "Anonymous",
-        text:
-          typeof message.text === "string"
-            ? message.text
-            : String(message.text || ""),
-        timestamp: message.timestamp || new Date().toISOString(),
-        type: "message",
-        role: userRole,
-        recipient: recipient || null,
-      };
-
-      // Save to database
-      await saveMessage(formattedMessage);
-
-      // If sender is teacher, send only to the specific student
-      if (userRole === "teacher" && recipient) {
-        // Find student's current socket ID using their persistent ID
-        const student = roomStudents[sessionId]?.find(
-          (s) => s.persistentId === recipient || s.id === recipient
-        );
-        if (student) {
-          io.to(student.id).emit("message", {
-            ...formattedMessage,
-            sender: "teacher",
-          });
-        }
-        socket.emit("message", formattedMessage);
-      } else if (userRole === "student") {
-        // If sender is student, send only to teacher
-        if (roomTeachers[sessionId]) {
-          io.to(roomTeachers[sessionId]).emit("message", formattedMessage);
-        }
-        socket.emit("message", {
-          ...formattedMessage,
-          sender: socket.userData.username,
-        });
-      }
-
-      // Update student's last activity time
-      if (userRole === "student") {
-        const studentIndex = roomStudents[sessionId]?.findIndex(
-          (s) =>
-            (studentId && s.persistentId === studentId) || s.id === socket.id
-        );
-        if (studentIndex >= 0) {
-          roomStudents[sessionId][studentIndex].lastActive =
-            new Date().toISOString();
-          roomStudents[sessionId][studentIndex].status = "active";
-
-          // Update in database
-          await saveStudent(roomStudents[sessionId][studentIndex]);
-
-          // Notify teacher about updated student status
-          if (roomTeachers[sessionId]) {
-            io.to(roomTeachers[sessionId]).emit(
-              "student_list",
-              roomStudents[sessionId]
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error handling message:", error);
-      socket.emit("error", { message: "Failed to process message" });
-    }
-  });
 
   // Handle typing status
   socket.on("typing", (data) => {
@@ -626,6 +590,10 @@ io.on("connection", (socket) => {
   // Handle selecting a student to chat with (teacher only)
   socket.on("select_student", async (sessionId, studentId) => {
     try {
+      console.log(
+        `Starting select_student for session: ${sessionId}, studentId: ${studentId}`
+      );
+
       const userRole = socket.userData?.role;
 
       if (userRole !== "teacher") {
@@ -637,24 +605,65 @@ io.on("connection", (socket) => {
       const student = roomStudents[sessionId]?.find(
         (s) => s.persistentId === studentId || s.id === studentId
       );
-      const effectiveStudentId = student
-        ? student.persistentId || student.id
-        : studentId;
 
-      // Get chat history for specific student from database
-      const messages = await db.all(
-        `SELECT * FROM messages 
-         WHERE session_id = ? AND (
-           type = 'notification' OR 
-           sender = ? OR 
-           (role = 'teacher' AND recipient = ?)
-         )
-         ORDER BY timestamp ASC`,
-        [sessionId, effectiveStudentId, effectiveStudentId]
+      if (!student) {
+        socket.emit("error", { message: "Student not found" });
+        return;
+      }
+
+      const effectiveStudentId = student.persistentId || student.id;
+
+      console.log(
+        `Teacher selected student: ${student.username} with ID: ${effectiveStudentId}`
       );
 
-      // Format the messages to ensure consistency with frontend
-      const studentChat = messages.map((msg) => ({
+      // Log all database tables and structure for debugging
+      console.log("Checking database state...");
+
+      // Check if we have any messages at all in this session
+      const allSessionMessages = await db.all(
+        "SELECT * FROM messages WHERE session_id = ?",
+        [sessionId]
+      );
+
+      console.log(
+        `Total messages in session ${sessionId}: ${allSessionMessages.length}`
+      );
+
+      if (allSessionMessages.length > 0) {
+        // Log message types and roles to understand what's in the database
+        const messageTypes = {};
+        const messageRoles = {};
+        const senderCounts = {};
+
+        allSessionMessages.forEach((msg) => {
+          messageTypes[msg.type] = (messageTypes[msg.type] || 0) + 1;
+          messageRoles[msg.role] = (messageRoles[msg.role] || 0) + 1;
+          senderCounts[msg.sender] = (senderCounts[msg.sender] || 0) + 1;
+        });
+
+        console.log("Message types in database:", messageTypes);
+        console.log("Message roles in database:", messageRoles);
+        console.log("Sender counts:", senderCounts);
+
+        // Log a few sample messages
+        console.log("Sample messages:");
+        allSessionMessages.slice(0, 5).forEach((msg, i) => {
+          console.log(`Message ${i + 1}:`, {
+            id: msg.id,
+            type: msg.type,
+            role: msg.role,
+            sender: msg.sender,
+            sender_name: msg.sender_name,
+            recipient: msg.recipient,
+            text:
+              msg.text.substring(0, 50) + (msg.text.length > 50 ? "..." : ""),
+          });
+        });
+      }
+
+      // Console output for bug checking
+      const studentChat = allSessionMessages.map((msg) => ({
         id: msg.id,
         sender: msg.sender,
         senderName: msg.sender_name,
@@ -665,11 +674,107 @@ io.on("connection", (socket) => {
         recipient: msg.recipient,
       }));
 
-      // Send chat history to teacher with the ID that was requested
+      console.log(
+        `Sending ${studentChat.length} messages to teacher for student: ${student.username}`
+      );
+
+      // Send ALL chat messages to teacher for now (for debugging)
       socket.emit("student_chat_history", { studentId, chat: studentChat });
     } catch (error) {
       console.error("Error selecting student:", error);
       socket.emit("error", { message: "Failed to select student" });
+    }
+  });
+
+  // Handle kicking a student from the session
+  socket.on("kick_student", async (data) => {
+    try {
+      const { sessionId, studentId, persistentId } = data;
+      const userRole = socket.userData?.role;
+
+      // Only teachers can kick students
+      if (userRole !== "teacher") {
+        socket.emit("error", { message: "Only teachers can remove students" });
+        return;
+      }
+
+      // Find the student using either socket ID or persistent ID
+      const studentToKick = roomStudents[sessionId]?.find(
+        (s) => s.id === studentId || s.persistentId === persistentId
+      );
+
+      if (!studentToKick) {
+        socket.emit("student_kicked", {
+          studentId,
+          success: false,
+          message: "Student not found",
+        });
+        return;
+      }
+
+      // Create a kick message to notify everyone
+      const kickMessage = {
+        id: generateUniqueMessageId(),
+        sessionId: sessionId,
+        sender: "system",
+        senderName: "System",
+        text: `${studentToKick.username} has been removed from the session`,
+        timestamp: new Date().toISOString(),
+        type: "notification",
+        role: "system",
+      };
+
+      // Save to database
+      await saveMessage(kickMessage);
+
+      // Notify the student being kicked
+      io.to(studentToKick.id).emit("kicked_from_session", {
+        message: "You have been removed from this session by the teacher",
+      });
+
+      // Disconnect the student's socket
+      const studentSocket = io.sockets.sockets.get(studentToKick.id);
+      if (studentSocket) {
+        studentSocket.disconnect(true);
+      }
+
+      // Update student status in database
+      studentToKick.status = "kicked";
+      studentToKick.lastActive = new Date().toISOString();
+      await db.run(
+        `UPDATE students SET status = ?, last_active = ? WHERE socket_id = ? OR persistent_id = ?`,
+        [
+          "kicked",
+          new Date().toISOString(),
+          studentToKick.id,
+          studentToKick.persistentId,
+        ]
+      );
+
+      // Remove student from the room's student list
+      roomStudents[sessionId] = roomStudents[sessionId].filter(
+        (s) =>
+          s.id !== studentToKick.id &&
+          s.persistentId !== studentToKick.persistentId
+      );
+
+      // Notify teacher about successful kick and updated student list
+      socket.emit("student_kicked", { studentId, success: true });
+      socket.emit("student_list", roomStudents[sessionId]);
+
+      // Also send the kick notification message to the teacher
+      socket.emit("message", kickMessage);
+
+      console.log(
+        `Student ${studentToKick.username} kicked from session ${sessionId}`
+      );
+    } catch (error) {
+      console.error("Error kicking student:", error);
+      socket.emit("student_kicked", {
+        studentId,
+        success: false,
+        message: "Failed to kick student",
+      });
     }
   });
 
@@ -680,7 +785,7 @@ io.on("connection", (socket) => {
 
       // Notify about user leaving
       const leaveMessage = {
-        id: Date.now().toString(),
+        id: generateUniqueMessageId(),
         sessionId: sessionId,
         sender: "system",
         senderName: "System",
@@ -797,7 +902,7 @@ io.on("connection", (socket) => {
 
         // Add disconnect message
         const disconnectMessage = {
-          id: Date.now().toString(),
+          id: generateUniqueMessageId(),
           sessionId: userData.currentRoom,
           sender: "system",
           senderName: "System",
