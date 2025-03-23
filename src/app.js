@@ -739,16 +739,9 @@ io.on("connection", (socket) => {
       }
 
       // Update student status in database
-      studentToKick.status = "kicked";
-      studentToKick.lastActive = new Date().toISOString();
       await db.run(
-        `UPDATE students SET status = ?, last_active = ? WHERE socket_id = ? OR persistent_id = ?`,
-        [
-          "kicked",
-          new Date().toISOString(),
-          studentToKick.id,
-          studentToKick.persistentId,
-        ]
+        `DELETE FROM students WHERE socket_id = ? OR persistent_id = ?`,
+        [studentToKick.id, studentToKick.persistentId]
       );
 
       // Remove student from the room's student list
