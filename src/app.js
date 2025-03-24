@@ -803,6 +803,91 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle kicking a student from the session
+  socket.on("kick_student", async (data) => {
+    try {
+      const { sessionId, studentId, persistentId } = data;
+      const userRole = socket.userData?.role;
+
+      // Only teachers can kick students
+      if (userRole !== "teacher") {
+        socket.emit("error", { message: "Only teachers can remove students" });
+        return;
+      }
+
+      // Find the student using either socket ID or persistent ID
+      const studentToKick = roomStudents[sessionId]?.find(
+        (s) => s.id === studentId || s.persistentId === persistentId
+      );
+
+      if (!studentToKick) {
+        socket.emit("student_kicked", {
+          studentId,
+          success: false,
+          message: "Student not found",
+        });
+        return;
+      }
+
+      // Create a kick message to notify everyone
+      const kickMessage = {
+        id: generateUniqueMessageId(),
+        sessionId: sessionId,
+        sender: "system",
+        senderName: "System",
+        text: `${studentToKick.username} has been removed from the session`,
+        timestamp: new Date().toISOString(),
+        type: "notification",
+        role: "system",
+      };
+
+      // Save to database
+      await saveMessage(kickMessage);
+
+      // Notify the student being kicked
+      io.to(studentToKick.id).emit("kicked_from_session", {
+        message: "You have been removed from this session by the teacher",
+      });
+
+      // Disconnect the student's socket
+      const studentSocket = io.sockets.sockets.get(studentToKick.id);
+      if (studentSocket) {
+        studentSocket.disconnect(true);
+      }
+
+      // Update student status in database
+      await db.run(
+        `DELETE FROM students WHERE socket_id = ? OR persistent_id = ?`,
+        [studentToKick.id, studentToKick.persistentId]
+      );
+
+      // Remove student from the room's student list
+      roomStudents[sessionId] = roomStudents[sessionId].filter(
+        (s) =>
+          s.id !== studentToKick.id &&
+          s.persistentId !== studentToKick.persistentId
+      );
+
+      // Notify teacher about successful kick and updated student list
+      socket.emit("student_kicked", { studentId, success: true });
+      socket.emit("student_list", roomStudents[sessionId]);
+
+      // Also send the kick notification message to the teacher
+      socket.emit("message", kickMessage);
+
+      console.log(
+        `Student ${studentToKick.username} kicked from session ${sessionId}`
+      );
+    } catch (error) {
+      console.error("Error kicking student:", error);
+      socket.emit("student_kicked", {
+        studentId,
+        success: false,
+        message: "Failed to kick student",
+      });
+    }
+  });
+
   // Handle user leaving
   socket.on("leave_room", async (sessionId, username, studentId = null) => {
     try {
