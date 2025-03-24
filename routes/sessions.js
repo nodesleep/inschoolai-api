@@ -1,5 +1,9 @@
 import express from "express";
-import { createSession } from "../models/session.js";
+import {
+  createSession,
+  isSessionActive,
+  deactivateSession,
+} from "../models/session.js";
 import { getSessionStudents } from "../models/student.js";
 import { getSessionMessages, getStudentMessages } from "../models/message.js";
 
@@ -65,6 +69,44 @@ router.get("/session/:sessionId/student/:studentId", async (req, res, next) => {
       username
     );
     res.json(studentChat);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Add a new endpoint to verify if a session is active (for students to check before attempting to join)
+router.get("/session/:sessionId/status", async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+
+    const active = await isSessionActive(sessionId);
+    res.json({ sessionId, active });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Add endpoint to end a session (teacher only)
+router.post("/session/:sessionId/end", async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { role } = req.query;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+
+    // Only teachers can end a session
+    if (role !== "teacher") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await deactivateSession(sessionId);
+    res.json({ success: true, message: "Session ended successfully" });
   } catch (error) {
     next(error);
   }

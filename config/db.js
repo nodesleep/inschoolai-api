@@ -15,7 +15,8 @@ export async function initializeDatabase() {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT PRIMARY KEY,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'active'
     );
     
     CREATE TABLE IF NOT EXISTS students (

@@ -12,8 +12,11 @@ export async function createSession() {
     sessionId += digits.charAt(Math.floor(Math.random() * digits.length));
   }
 
-  // Initialize session in database
-  await db.run("INSERT INTO sessions (session_id) VALUES (?)", [sessionId]);
+  // Initialize session in database with active status
+  await db.run("INSERT INTO sessions (session_id, status) VALUES (?, ?)", [
+    sessionId,
+    "active",
+  ]);
 
   return sessionId;
 }
@@ -26,15 +29,37 @@ export async function getSession(sessionId) {
   ]);
 }
 
-// Check if a session exists, create it if it doesn't
+// Check if a session exists and is active
+export async function isSessionActive(sessionId) {
+  const db = getDb();
+  const session = await db.get(
+    "SELECT * FROM sessions WHERE session_id = ? AND status = 'active'",
+    [sessionId]
+  );
+  return session !== undefined;
+}
+
+// Check if a session exists, create it if it doesn't (only for back-compatibility)
 export async function ensureSessionExists(sessionId) {
   const db = getDb();
   const session = await getSession(sessionId);
 
   if (!session) {
-    await db.run("INSERT INTO sessions (session_id) VALUES (?)", [sessionId]);
+    await db.run("INSERT INTO sessions (session_id, status) VALUES (?, ?)", [
+      sessionId,
+      "active",
+    ]);
     return false; // Session was created
   }
 
   return true; // Session already existed
+}
+
+// End/deactivate a session
+export async function deactivateSession(sessionId) {
+  const db = getDb();
+  await db.run("UPDATE sessions SET status = 'inactive' WHERE session_id = ?", [
+    sessionId,
+  ]);
+  return true;
 }

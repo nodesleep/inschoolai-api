@@ -10,7 +10,11 @@ import {
   getStudentMessages,
   getStudentRelevantMessages,
 } from "../models/message.js";
-import { ensureSessionExists } from "../models/session.js";
+import {
+  ensureSessionExists,
+  isSessionActive,
+  deactivateSession,
+} from "../models/session.js";
 import * as chatService from "./chat.js";
 
 let io;
@@ -87,6 +91,17 @@ async function handleJoinRoom(
 
     const sanitizedUsername = username || "Anonymous";
     const userRole = role || "student";
+
+    // If this is a student, check if the session exists and is active
+    if (userRole === "student") {
+      const isActive = await isSessionActive(sessionId);
+      if (!isActive) {
+        socket.emit("error", {
+          message: "This session does not exist or is no longer active",
+        });
+        return;
+      }
+    }
 
     // Join the socket.io room
     socket.join(sessionId);
