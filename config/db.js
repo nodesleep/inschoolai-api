@@ -16,7 +16,8 @@ export async function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT PRIMARY KEY,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      status TEXT DEFAULT 'active'
+      status TEXT DEFAULT 'active',
+      teacher_id TEXT
     );
     
     CREATE TABLE IF NOT EXISTS students (
@@ -43,7 +44,7 @@ export async function initializeDatabase() {
     );
   `);
 
-  // Check if we need to run migrations for existing databases
+  // Run migrations for existing databases
   await migrateDatabase(db);
 
   console.log("Database initialized");
@@ -55,22 +56,30 @@ async function migrateDatabase(db) {
   try {
     // Check if status column exists in sessions table
     const tableInfo = await db.all("PRAGMA table_info(sessions)");
+
+    // Check for status column
     const hasStatusColumn = tableInfo.some(
       (column) => column.name === "status"
     );
-
     if (!hasStatusColumn) {
       console.log("Migrating database: Adding status column to sessions table");
-
-      // Add status column to sessions table
       await db.exec(
         "ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'active'"
       );
-
-      // Update all existing sessions to be active
       await db.exec("UPDATE sessions SET status = 'active'");
+      console.log("Status column migration completed");
+    }
 
-      console.log("Database migration completed successfully");
+    // Check for teacher_id column
+    const hasTeacherIdColumn = tableInfo.some(
+      (column) => column.name === "teacher_id"
+    );
+    if (!hasTeacherIdColumn) {
+      console.log(
+        "Migrating database: Adding teacher_id column to sessions table"
+      );
+      await db.exec("ALTER TABLE sessions ADD COLUMN teacher_id TEXT");
+      console.log("Teacher ID column migration completed");
     }
   } catch (error) {
     console.error("Error during database migration:", error);
