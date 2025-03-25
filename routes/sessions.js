@@ -3,6 +3,7 @@ import {
   createSession,
   isSessionActive,
   deactivateSession,
+  getTeacherSessions,
 } from "../models/session.js";
 import { getSessionStudents } from "../models/student.js";
 import { getSessionMessages, getStudentMessages } from "../models/message.js";
@@ -12,8 +13,10 @@ const router = express.Router();
 // Generate a new session
 router.post("/generate-session", async (req, res) => {
   try {
-    // Create a new session ID
-    const sessionId = await createSession();
+    const { teacherId } = req.body;
+
+    // Create a new session ID associated with this teacher
+    const sessionId = await createSession(teacherId);
 
     res.json({ sessionId });
   } catch (error) {
@@ -107,6 +110,22 @@ router.post("/session/:sessionId/end", async (req, res, next) => {
 
     await deactivateSession(sessionId);
     res.json({ success: true, message: "Session ended successfully" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Add a new endpoint to get all sessions for a teacher
+router.get("/teacher/:teacherId/sessions", async (req, res, next) => {
+  try {
+    const { teacherId } = req.params;
+
+    if (!teacherId) {
+      return res.status(400).json({ error: "Teacher ID is required" });
+    }
+
+    const sessions = await getTeacherSessions(teacherId);
+    res.json(sessions);
   } catch (error) {
     next(error);
   }

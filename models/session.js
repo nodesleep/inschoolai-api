@@ -1,7 +1,7 @@
 import { getDb } from "../config/db.js";
 
 // Create a new session with a random 5-digit code
-export async function createSession() {
+export async function createSession(teacherId = null) {
   const db = getDb();
 
   // Create a 5-digit numerical code
@@ -23,13 +23,15 @@ export async function createSession() {
     }
   }
 
-  // Initialize session in database with active status
-  await db.run("INSERT INTO sessions (session_id, status) VALUES (?, ?)", [
-    sessionId,
-    "active",
-  ]);
+  // Initialize session in database with active status and teacher ID
+  await db.run(
+    "INSERT INTO sessions (session_id, status, teacher_id) VALUES (?, ?, ?)",
+    [sessionId, "active", teacherId]
+  );
 
-  console.log(`Created new session: ${sessionId}`);
+  console.log(
+    `Created new session: ${sessionId} for teacher: ${teacherId || "anonymous"}`
+  );
   return sessionId;
 }
 
@@ -85,4 +87,38 @@ export async function deactivateSession(sessionId) {
     sessionId,
   ]);
   return true;
+}
+
+// Get all sessions for a specific teacher
+export async function getTeacherSessions(teacherId) {
+  const db = getDb();
+
+  try {
+    const sessions = await db.all(
+      "SELECT * FROM sessions WHERE teacher_id = ? ORDER BY created_at DESC",
+      [teacherId]
+    );
+
+    return sessions;
+  } catch (error) {
+    console.error("Error getting teacher sessions:", error);
+    return [];
+  }
+}
+
+// Check if a teacher owns a specific session
+export async function isTeacherSessionOwner(sessionId, teacherId) {
+  const db = getDb();
+
+  try {
+    const session = await db.get(
+      "SELECT * FROM sessions WHERE session_id = ? AND teacher_id = ?",
+      [sessionId, teacherId]
+    );
+
+    return session !== undefined;
+  } catch (error) {
+    console.error("Error checking session ownership:", error);
+    return false;
+  }
 }

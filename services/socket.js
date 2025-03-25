@@ -82,7 +82,8 @@ async function handleJoinRoom(
   sessionId,
   username,
   role,
-  persistentStudentId = null
+  persistentStudentId = null,
+  teacherId = null
 ) {
   try {
     // Validate input
@@ -94,8 +95,32 @@ async function handleJoinRoom(
     const sanitizedUsername = username || "Anonymous";
     const userRole = role || "student";
 
+    // If this is a teacher joining, associate them with the session if they're the creator
+    if (userRole === "teacher" && teacherId) {
+      // Check if session exists first
+      const sessionExists = await ensureSessionExists(sessionId);
+
+      // If it's a new session, set the teacher as owner
+      if (!sessionExists) {
+        const db = getDb();
+        await db.run(
+          "UPDATE sessions SET teacher_id = ? WHERE session_id = ?",
+          [teacherId, sessionId]
+        );
+      }
+      // If existing session, only allow if this teacher created it
+      else if (teacherId) {
+        const isOwner = await isTeacherSessionOwner(sessionId, teacherId);
+        if (!isOwner) {
+          // We still allow the teacher to join, but log that they're not the owner
+          console.log(
+            `Teacher ${teacherId} is joining session ${sessionId} but is not the creator`
+          );
+        }
+      }
+    }
     // If this is a student, check if the session exists and is active
-    if (userRole === "student") {
+    else if (userRole === "student") {
       const isActive = await isSessionActive(sessionId);
       if (!isActive) {
         socket.emit("error", {
