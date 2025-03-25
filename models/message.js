@@ -112,17 +112,20 @@ export async function getStudentRelevantMessages(sessionId, studentId) {
     const messages = await db.all(
       `SELECT * FROM messages 
        WHERE session_id = ? AND (
-         -- Show all system notifications
-         type = 'notification' OR
-         -- Show messages from ALL students (for class-wide visibility)
-         role = 'student' OR
-         -- Show teacher messages to this student or to everyone
+         -- Show only global system notifications (not student-specific ones)
+         (type = 'notification' AND role = 'system' AND recipient IS NULL) OR
+         
+         -- Show messages from this specific student
+         sender = ? OR
+         
+         -- Show teacher messages to this student or global announcements
          (role = 'teacher' AND (recipient = ? OR recipient IS NULL)) OR
+         
          -- Show AI messages intended for this student
          (sender = 'ai-assistant' AND recipient = ?)
        )
        ORDER BY timestamp ASC`,
-      [sessionId, studentId, studentId]
+      [sessionId, studentId, studentId, studentId]
     );
 
     // Format the messages for consistency

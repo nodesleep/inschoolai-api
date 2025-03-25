@@ -1,7 +1,4 @@
-import {
-  getSessionMessages,
-  getStudentRelevantMessages,
-} from "../models/message.js";
+import { getSessionMessages } from "../models/message.js";
 import { getSessionStudents } from "../models/student.js";
 
 // In-memory cache for better performance
@@ -98,8 +95,8 @@ export function removeStudentFromCache(sessionId, studentId, socketId = null) {
 
   roomStudents[sessionId] = roomStudents[sessionId].filter(
     (s) =>
-      (studentId && s.persistentId !== studentId) ||
-      (socketId && s.id !== socketId)
+      !(studentId && s.persistentId === studentId) &&
+      !(socketId && s.id === socketId)
   );
 
   return roomStudents[sessionId];
