@@ -43,8 +43,39 @@ export async function initializeDatabase() {
     );
   `);
 
+  // Check if we need to run migrations for existing databases
+  await migrateDatabase(db);
+
   console.log("Database initialized");
   return db;
+}
+
+// Handle migrations for existing databases
+async function migrateDatabase(db) {
+  try {
+    // Check if status column exists in sessions table
+    const tableInfo = await db.all("PRAGMA table_info(sessions)");
+    const hasStatusColumn = tableInfo.some(
+      (column) => column.name === "status"
+    );
+
+    if (!hasStatusColumn) {
+      console.log("Migrating database: Adding status column to sessions table");
+
+      // Add status column to sessions table
+      await db.exec(
+        "ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'active'"
+      );
+
+      // Update all existing sessions to be active
+      await db.exec("UPDATE sessions SET status = 'active'");
+
+      console.log("Database migration completed successfully");
+    }
+  } catch (error) {
+    console.error("Error during database migration:", error);
+    // Don't throw, as we want the app to continue even if migration fails
+  }
 }
 
 // Export the database instance getter

@@ -5,11 +5,22 @@ export async function createSession() {
   const db = getDb();
 
   // Create a 5-digit numerical code
-  let sessionId = "";
-  const digits = "0123456789";
+  let sessionId;
+  let isUnique = false;
 
-  for (let i = 0; i < 5; i++) {
-    sessionId += digits.charAt(Math.floor(Math.random() * digits.length));
+  // Keep trying until we get a unique session ID
+  while (!isUnique) {
+    sessionId = generateRandomSessionId();
+
+    // Check if this session ID already exists
+    const existingSession = await db.get(
+      "SELECT session_id FROM sessions WHERE session_id = ?",
+      [sessionId]
+    );
+
+    if (!existingSession) {
+      isUnique = true;
+    }
   }
 
   // Initialize session in database with active status
@@ -18,7 +29,19 @@ export async function createSession() {
     "active",
   ]);
 
+  console.log(`Created new session: ${sessionId}`);
   return sessionId;
+}
+
+// Helper function to generate a random session ID
+function generateRandomSessionId() {
+  // Generate a random 5-digit number
+  const min = 10000; // Smallest 5-digit number
+  const max = 99999; // Largest 5-digit number
+
+  // Math.random() gives a number between 0 and 1
+  // We scale and shift it to get a number between min and max, then round down
+  return Math.floor(Math.random() * (max - min + 1) + min).toString();
 }
 
 // Get a session by ID

@@ -71,6 +71,8 @@ function handleConnection(socket) {
     handleLeaveRoom(socket, sessionId, username, studentId)
   );
 
+  socket.on("end_session", (sessionId) => handleEndSession(socket, sessionId));
+
   socket.on("disconnect", () => handleDisconnect(socket));
 }
 
@@ -732,5 +734,65 @@ async function handleDisconnect(socket) {
     console.log("Client disconnected:", socket.id);
   } catch (error) {
     console.error("Error handling disconnect:", error);
+  }
+}
+
+// Handle ending a session (teacher only)
+async function handleEndSession(socket, sessionId) {
+  try {
+    const userRole = socket.userData?.role;
+
+    // Verify the user is a teacher
+    if (userRole !== "teacher") {
+      socket.emit("error", { message: "Only teachers can end sessions" });
+      return;
+    }
+
+    // Deactivate the session
+    await deactivateSession(sessionId);
+
+    // Notify all users in the session that it's ending
+    const endMessage = {
+      id: generateUniqueMessageId(),
+      sessionId: sessionId,
+      sender: "system",
+      senderName: "System",
+      text: "This session has been ended by the teacher",
+      timestamp: new Date().toISOString(),
+      type: "notification",
+      role: "system",
+    };
+
+    // Save to database
+    await saveMessage(endMessage);
+
+    // Add to cache
+    chatService.addMessageToCache(endMessage);
+
+    // Broadcast to all users in the session
+    io.to(sessionId).emit("session_ended", {
+      message: "This session has been ended by the teacher",
+    });
+    io.to(sessionId).emit("message", endMessage);
+
+    // Disconnect all students
+    const students = chatService.getStudentsFromCache(sessionId);
+    for (const student of students) {
+      const studentSocket = io.sockets.sockets.get(student.id);
+      if (studentSocket) {
+        studentSocket.disconnect(true);
+      }
+    }
+
+    // Clear session cache
+    chatService.clearSessionCache(sessionId);
+
+    console.log(`Session ${sessionId} ended by teacher`);
+
+    // Acknowledge the session end
+    socket.emit("session_ended_ack", { success: true });
+  } catch (error) {
+    console.error("Error ending session:", error);
+    socket.emit("error", { message: "Failed to end session" });
   }
 }
